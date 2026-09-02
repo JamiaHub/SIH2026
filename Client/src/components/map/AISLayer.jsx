@@ -19,7 +19,7 @@ export function AISLayer() {
         key={track.vessel_id}
         positions={track.positions.map(([lng, lat]) => [lat, lng])}
         pathOptions={{
-          color: highlighted ? "#ffca70" : "#708e99",
+          color: highlighted ? "#2563eb" : "#60a5fa",
           weight: highlighted ? 3 : 1,
           opacity: highlighted ? 0.95 : 0.28,
           dashArray: highlighted ? undefined : "3 7",

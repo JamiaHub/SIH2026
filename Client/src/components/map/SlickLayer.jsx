@@ -1,14 +1,7 @@
 import { Polygon } from "react-leaflet";
 import { useMapStore } from "../../store/useMapStore";
 
-const CLASS_COLORS = {
-  infrastructure: "#8aa0d5",
-  natural_seep: "#34d399",
-  coincident_vessel: "#60a5fa",
-  recent_vessel: "#7dd3fc",
-  old_vessel: "#fbbf24",
-  ambiguous: "#f87171",
-};
+const SLICK_COLOR = "#f97316";
 
 export function SlickLayer({ slicks }) {
   const selectedSlickId = useMapStore((state) => state.selectedSlickId);
@@ -17,7 +10,7 @@ export function SlickLayer({ slicks }) {
   const setHoveredSlickId = useMapStore((state) => state.setHoveredSlickId);
 
   return slicks.map((slick) => {
-    const fillColor = CLASS_COLORS[slick.class] ?? "#94a3b8";
+    const fillColor = SLICK_COLOR;
     const isSelected = slick.id === selectedSlickId;
     const isHovered = slick.id === hoveredSlickId;
 
@@ -26,7 +19,7 @@ export function SlickLayer({ slicks }) {
         key={slick.id}
         positions={slick.polygon.coordinates[0].map(([lng, lat]) => [lat, lng])}
         pathOptions={{
-          color: isSelected ? "#f4fffb" : isHovered ? "#70d2c0" : fillColor,
+          color: isSelected ? "#fff7ed" : isHovered ? "#fdba74" : fillColor,
           fillColor,
           fillOpacity: isSelected
             ? 0.78
