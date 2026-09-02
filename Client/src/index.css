@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #253642;
+  background-color: #e9e5dc;
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  min-width: 100%;
+  background: #e9e5dc;
+}
+
+body {
+  min-height: 100vh;
+  background: #e9e5dc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.leaflet-container {
+  background: #b7c9c5;
+  filter: saturate(0.78) contrast(1.04);
+}
+
+.leaflet-control-attribution {
+  background: rgba(245, 242, 233, 0.92) !important;
+  color: #475569 !important;
+}
+
+.leaflet-control-attribution a {
+  color: #334155 !important;
+}
+
+.leaflet-control-zoom {
+  border: 1px solid #aebdb8 !important;
+  border-radius: 6px !important;
+  overflow: hidden !important;
+  box-shadow: none !important;
+}
+
+.leaflet-control-zoom a {
+  background: #f5f2e9 !important;
+  color: #475569 !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+.slider-track::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #1f2937;
+  border: 2px solid #f8fafc;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.2);
+}
+
+.slider-track::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #1f2937;
+  border: 2px solid #f8fafc;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.2);
+}
