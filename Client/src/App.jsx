@@ -1,41 +1,20 @@
-import {
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import {
-  getMarineEyeData,
-} from "./api/dataClient";
+import { getMarineEyeData } from "./api/dataClient";
 
-import {
-  getMarineEyeData as getMockMarineEyeData,
-} from "./api/mockClient";
+import { getMarineEyeData as getMockMarineEyeData } from "./api/mockClient";
 
-import {
-  FilterBar,
-} from "./components/filters/FilterBar";
+import { FilterBar } from "./components/filters/FilterBar";
 
-import {
-  MapShell,
-} from "./components/map/MapShell";
+import { MapShell } from "./components/map/MapShell";
 
-import {
-  SlickDetailPanel,
-} from "./components/panel/SlickDetailPanel";
+import { SlickDetailPanel } from "./components/panel/SlickDetailPanel";
 
-import {
-  StatsBar,
-} from "./components/stats/StatsBar";
+import { StatsBar } from "./components/stats/StatsBar";
 
-import {
-  InvestigationReport,
-} from "./components/report/InvestigationReport";
+import { InvestigationReport } from "./components/report/InvestigationReport";
 
-import {
-  matchesFilters,
-  useMapStore,
-} from "./store/useMapStore";
+import { matchesFilters, useMapStore } from "./store/useMapStore";
 
 function LoadingState() {
   return (
@@ -59,9 +38,7 @@ function LoadingState() {
   );
 }
 
-function EmptyState({
-  hasData,
-}) {
+function EmptyState({ hasData }) {
   return (
     <div className="pointer-events-none absolute inset-0 z-[650] flex items-center justify-center">
       <div className="pointer-events-auto max-w-sm rounded-2xl border border-[#c8d2cd] bg-[#f8f6ef]/95 px-6 py-5 text-center shadow-2xl backdrop-blur-md">
@@ -95,12 +72,7 @@ function EmptyState({
   );
 }
 
-function HeaderMenu({
-  title,
-  open,
-  onToggle,
-  children,
-}) {
+function HeaderMenu({ title, open, onToggle, children }) {
   return (
     <div className="relative">
       <button
@@ -118,9 +90,7 @@ function HeaderMenu({
         <svg
           viewBox="0 0 20 20"
           className={`h-3.5 w-3.5 transition-transform ${
-            open
-              ? "rotate-180"
-              : ""
+            open ? "rotate-180" : ""
           }`}
           fill="none"
           stroke="currentColor"
@@ -136,9 +106,7 @@ function HeaderMenu({
       {open && (
         <div
           className="absolute right-0 top-full z-[2500] mt-2 w-[270px] overflow-hidden rounded-xl border border-[#d0d8d3] bg-[#f8f6ef] shadow-[0_14px_35px_rgba(37,54,66,0.16)]"
-          onClick={(event) =>
-            event.stopPropagation()
-          }
+          onClick={(event) => event.stopPropagation()}
         >
           {children}
         </div>
@@ -148,223 +116,124 @@ function HeaderMenu({
 }
 
 export default function App() {
-  const [
-    isLoading,
-    setIsLoading,
-  ] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const [
-    dataSource,
-    setDataSource,
-  ] = useState("unknown");
+  const [dataSource, setDataSource] = useState("unknown");
 
-  const [
-    isReportOpen,
-    setIsReportOpen,
-  ] = useState(false);
+  const [isReportOpen, setIsReportOpen] = useState(false);
 
-  const [
-    openMenu,
-    setOpenMenu,
-  ] = useState(null);
+  const [openMenu, setOpenMenu] = useState(null);
 
-  const slicks =
-    useMapStore(
-      (state) => state.slicks,
-    );
+  const slicks = useMapStore((state) => state.slicks);
 
-  const filters =
-    useMapStore(
-      (state) => state.filters,
-    );
+  const filters = useMapStore((state) => state.filters);
 
-  const selectedSlickId =
-    useMapStore(
-      (state) =>
-        state.selectedSlickId,
-    );
+  const selectedSlickId = useMapStore((state) => state.selectedSlickId);
 
-  const cursorPosition =
-    useMapStore(
-      (state) =>
-        state.cursorPosition,
-    );
+  const cursorPosition = useMapStore((state) => state.cursorPosition);
 
-  const mapZoom =
-    useMapStore(
-      (state) => state.mapZoom,
-    );
+  const mapZoom = useMapStore((state) => state.mapZoom);
 
-  const setSlicks =
-    useMapStore(
-      (state) =>
-        state.setSlicks,
-    );
+  const setSlicks = useMapStore((state) => state.setSlicks);
 
-  const setAISTracks =
-    useMapStore(
-      (state) =>
-        state.setAISTracks,
-    );
+  const setAISTracks = useMapStore((state) => state.setAISTracks);
 
-  const resetFilters =
-    useMapStore(
-      (state) =>
-        state.resetFilters,
-    );
+  const resetFilters = useMapStore((state) => state.resetFilters);
 
-  const visibleSlicks =
-    useMemo(
-      () =>
-        slicks.filter(
-          (slick) =>
-            matchesFilters(
-              slick,
-              filters,
-            ),
-        ),
-      [
-        filters,
-        slicks,
-      ],
-    );
+  const visibleSlicks = useMemo(
+    () => slicks.filter((slick) => matchesFilters(slick, filters)),
+    [filters, slicks],
+  );
 
-  const selectedSlick =
-    useMemo(
-      () =>
-        slicks.find(
-          (slick) =>
-            slick.id ===
-            selectedSlickId,
-        ) ?? null,
-      [
-        selectedSlickId,
-        slicks,
-      ],
-    );
+  const selectedSlick = useMemo(
+    () => slicks.find((slick) => slick.id === selectedSlickId) ?? null,
+    [selectedSlickId, slicks],
+  );
 
   useEffect(() => {
     let cancelled = false;
 
-    const loadData =
-      async () => {
-        setIsLoading(true);
+    const loadData = async () => {
+      setIsLoading(true);
+
+      try {
+        const response = await getMarineEyeData();
+
+        if (cancelled) {
+          return;
+        }
+
+        setSlicks(Array.isArray(response?.slicks) ? response.slicks : []);
+
+        setAISTracks(
+          Array.isArray(response?.aisTracks) ? response.aisTracks : [],
+        );
+
+        setDataSource("backend");
+      } catch (backendError) {
+        console.warn(
+          "MarineEye API unavailable; falling back to local prototype data.",
+          backendError,
+        );
 
         try {
-          const response =
-            await getMarineEyeData();
+          const response = await getMockMarineEyeData();
 
           if (cancelled) {
             return;
           }
 
-          setSlicks(
-            Array.isArray(
-              response?.slicks,
-            )
-              ? response.slicks
-              : [],
-          );
+          setSlicks(Array.isArray(response?.slicks) ? response.slicks : []);
 
           setAISTracks(
-            Array.isArray(
-              response?.aisTracks,
-            )
-              ? response.aisTracks
-              : [],
+            Array.isArray(response?.aisTracks) ? response.aisTracks : [],
           );
 
-          setDataSource(
-            "backend",
-          );
-        } catch (
-          backendError
-        ) {
-          console.warn(
-            "MarineEye API unavailable; falling back to local prototype data.",
-            backendError,
-          );
-
-          try {
-            const response =
-              await getMockMarineEyeData();
-
-            if (cancelled) {
-              return;
-            }
-
-            setSlicks(
-              Array.isArray(
-                response?.slicks,
-              )
-                ? response.slicks
-                : [],
-            );
-
-            setAISTracks(
-              Array.isArray(
-                response?.aisTracks,
-              )
-                ? response.aisTracks
-                : [],
-            );
-
-            setDataSource(
-              "mock",
-            );
-          } catch (
-            mockError
-          ) {
-            if (cancelled) {
-              return;
-            }
-
-            console.error(
-              "MarineEye data loading failed.",
-              mockError,
-            );
-
-            setSlicks([]);
-            setAISTracks([]);
-            setDataSource(
-              "none",
-            );
+          setDataSource("mock");
+        } catch (mockError) {
+          if (cancelled) {
+            return;
           }
-        } finally {
-          if (!cancelled) {
-            setIsLoading(false);
-          }
+
+          console.error("MarineEye data loading failed.", mockError);
+
+          setSlicks([]);
+          setAISTracks([]);
+          setDataSource("none");
         }
-      };
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    };
 
     loadData();
 
     return () => {
       cancelled = true;
     };
-  }, [
-    setAISTracks,
-    setSlicks,
-  ]);
+  }, [setAISTracks, setSlicks]);
 
   return (
     <div
-      className="min-h-screen bg-[#e9e5dc] text-[#253642]"
+      className="flex h-screen flex-col overflow-hidden bg-[#e9e5dc] text-[#253642]"
       onClick={() => {
         if (openMenu) {
           setOpenMenu(null);
         }
       }}
     >
-      <header className="relative z-[2000] border-b border-[#cdd4ce] bg-[#f5f2e9]/98">
-        <div className="mx-auto flex max-w-[1800px] items-center justify-between px-5 py-3">
+      <header
+        data-marineeye-header="true"
+        className="relative z-[2000] shrink-0 border-b border-[#cdd4ce] bg-[#f5f2e9]/98"
+      >
+        <div className="mx-auto flex max-w-[1800px] items-center justify-between px-5 py-2.5">
           <div className="flex items-center gap-4">
             <div>
               <span className="text-[1.3rem] font-semibold tracking-tight text-slate-900">
                 Marine
-                <span className="text-[#258f86]">
-                  Eye
-                </span>
+                <span className="text-[#258f86]">Eye</span>
               </span>
 
               <div className="mt-0.5 text-[8px] font-bold uppercase tracking-[0.24em] text-[#7b8788]">
@@ -381,56 +250,38 @@ export default function App() {
 
           <div
             className="flex items-center gap-2"
-            onClick={(event) =>
-              event.stopPropagation()
-            }
+            onClick={(event) => event.stopPropagation()}
           >
             <div
-              className={`hidden h-9 items-center gap-2 rounded-full border px-3 text-[9px] font-bold uppercase tracking-[0.1em] sm:flex ${
-                dataSource ===
-                "backend"
-                  ? "border-[#afd0c5] bg-[#eef7f3] text-[#246d68]"
-                  : dataSource ===
-                      "mock"
-                    ? "border-[#d7c59f] bg-[#f8f1df] text-[#8a6b2e]"
-                    : "border-[#d2d7d1] bg-[#f0f0ea] text-[#718083]"
+              className={`hidden h-9 animate-pulse items-center gap-2 rounded-full border px-3 text-[10px] font-bold tracking-[0.1em] sm:flex ${
+                dataSource === "backend"
+                  ? " bg-transparent text-[#246d68]"
+                  : dataSource === "mock"
+                    ? " bg-transparent text-[#8a6b2e]"
+                    : " bg-transparent text-[#718083]"
               }`}
             >
               <span
-                className={`h-1.5 w-1.5 rounded-full ${
-                  dataSource ===
-                  "backend"
+                className={`h-[6px] w-[6px] rounded-full ${
+                  dataSource === "backend"
                     ? "bg-[#3e9c88]"
-                    : dataSource ===
-                        "mock"
+                    : dataSource === "mock"
                       ? "bg-[#c99c42]"
                       : "bg-[#899394]"
                 }`}
               />
 
-              {dataSource ===
-              "backend"
+              {dataSource === "backend"
                 ? "API connected"
-                : dataSource ===
-                    "mock"
+                : dataSource === "mock"
                   ? "Prototype data"
                   : "No data"}
             </div>
 
             <HeaderMenu
               title="Help"
-              open={
-                openMenu ===
-                "help"
-              }
-              onToggle={() =>
-                setOpenMenu(
-                  openMenu ===
-                    "help"
-                    ? null
-                    : "help",
-                )
-              }
+              open={openMenu === "help"}
+              onToggle={() => setOpenMenu(openMenu === "help" ? null : "help")}
             >
               <div className="border-b border-[#dfe4df] px-4 py-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#718083]">
@@ -464,58 +315,35 @@ export default function App() {
                     "Generate report",
                     "Export the current investigation as a report or JSON evidence file.",
                   ],
-                ].map(
-                  ([
-                    number,
-                    title,
-                    description,
-                  ]) => (
-                    <div
-                      key={
-                        number
-                      }
-                      className="flex gap-3"
-                    >
-                      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-[#e4eee9] text-[9px] font-bold text-[#3d706b]">
-                        {
-                          number
-                        }
-                      </span>
+                ].map(([number, title, description]) => (
+                  <div key={number} className="flex gap-3">
+                    <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-[#e4eee9] text-[9px] font-bold text-[#3d706b]">
+                      {number}
+                    </span>
 
-                      <div>
-                        <p className="text-[11px] font-semibold text-[#344b4e]">
-                          {
-                            title
-                          }
-                        </p>
+                    <div>
+                      <p className="text-[11px] font-semibold text-[#344b4e]">
+                        {title}
+                      </p>
 
-                        <p className="mt-0.5 text-[10px] leading-4 text-[#718083]">
-                          {
-                            description
-                          }
-                        </p>
-                      </div>
+                      <p className="mt-0.5 text-[10px] leading-4 text-[#718083]">
+                        {description}
+                      </p>
                     </div>
-                  ),
-                )}
+                  </div>
+                ))}
               </div>
 
               <div className="border-t border-[#dfe4df] bg-[#eef4f1] px-4 py-3 text-[9px] leading-4 text-[#718083]">
-                Prototype drift and
-                attribution values are
-                investigation aids, not
-                scientific proof.
+                Prototype drift and attribution values are investigation aids,
+                not scientific proof.
               </div>
             </HeaderMenu>
 
             {selectedSlick && (
               <button
                 type="button"
-                onClick={() =>
-                  setIsReportOpen(
-                    true,
-                  )
-                }
+                onClick={() => setIsReportOpen(true)}
                 className="inline-flex h-9 items-center gap-2 rounded-lg border border-[#afd0c5] bg-[#eef7f3] px-3.5 text-sm font-semibold text-[#246d68] transition hover:bg-[#e2f0eb]"
               >
                 <svg
@@ -532,24 +360,15 @@ export default function App() {
                   <path d="M12 2.8v3h3" />
                   <path d="M8.5 10h4M8.5 13h4" />
                 </svg>
-
                 Report
               </button>
             )}
 
             <HeaderMenu
               title="Account"
-              open={
-                openMenu ===
-                "account"
-              }
+              open={openMenu === "account"}
               onToggle={() =>
-                setOpenMenu(
-                  openMenu ===
-                    "account"
-                    ? null
-                    : "account",
-                )
+                setOpenMenu(openMenu === "account" ? null : "account")
               }
             >
               <div className="border-b border-[#dfe4df] px-4 py-3">
@@ -569,11 +388,9 @@ export default function App() {
                   </p>
 
                   <p className="mt-1 text-xs font-semibold text-[#344b4e]">
-                    {dataSource ===
-                    "backend"
+                    {dataSource === "backend"
                       ? "FastAPI + SQLite"
-                      : dataSource ===
-                          "mock"
+                      : dataSource === "mock"
                         ? "Local CSV prototype"
                         : "Unavailable"}
                   </p>
@@ -583,9 +400,7 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     resetFilters();
-                    setOpenMenu(
-                      null,
-                    );
+                    setOpenMenu(null);
                   }}
                   className="mt-3 w-full rounded-lg border border-[#cbd5d0] bg-white px-3 py-2.5 text-[11px] font-semibold text-[#3d5558] transition hover:bg-[#f2f4f1]"
                 >
@@ -593,9 +408,7 @@ export default function App() {
                 </button>
 
                 <p className="mt-3 text-[9px] leading-4 text-[#879394]">
-                  Authentication is not
-                  configured for this
-                  prototype.
+                  Authentication is not configured for this prototype.
                 </p>
               </div>
             </HeaderMenu>
@@ -603,16 +416,12 @@ export default function App() {
         </div>
       </header>
 
-      <div className="mx-auto flex h-[calc(100vh-57px)] max-w-[1800px] overflow-hidden border border-[#cdd4ce] border-t-0 bg-[#eeece5] shadow-[0_14px_40px_rgba(46,59,58,0.08)]">
+      <div className="mx-auto flex min-h-0 w-full flex-1 max-w-[1800px] overflow-hidden border border-[#cdd4ce] border-t-0 bg-[#eeece5] shadow-[0_14px_40px_rgba(46,59,58,0.08)]">
         <aside className="relative z-[1000] h-full w-[360px] shrink-0 overflow-y-auto border-r border-[#cdd4ce] bg-[#e5e5dc] shadow-[4px_0_18px_rgba(46,59,58,0.05)]">
           {selectedSlick ? (
-            <SlickDetailPanel
-              slick={
-                selectedSlick
-              }
-            />
+            <SlickDetailPanel slick={selectedSlick} />
           ) : (
-            <div className="p-5">
+            <div>
               <FilterBar />
             </div>
           )}
@@ -623,75 +432,40 @@ export default function App() {
 
           <StatsBar />
 
-          {isLoading && (
-            <LoadingState />
+          {isLoading && <LoadingState />}
+
+          {!isLoading && visibleSlicks.length === 0 && (
+            <EmptyState hasData={slicks.length > 0} />
           )}
 
-          {!isLoading &&
-            visibleSlicks.length ===
-              0 && (
-              <EmptyState
-                hasData={
-                  slicks.length >
-                  0
-                }
-              />
-            )}
-
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[600] flex justify-between border-t border-[#b8c8c3] bg-[#f5f2e9]/90 px-4 py-2 text-[11px] text-[#637477] backdrop-blur-sm">
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[600] flex  justify-between border-t border-[#b8c8c3] bg-[#f5f2e9]/90 px-3 py-2 text-[11px] text-[#637477] backdrop-blur-sm">
             <span>
-              {
-                visibleSlicks.length
-              }{" "}
-              {visibleSlicks.length ===
-              1
-                ? "slick"
-                : "slicks"}{" "}
-              in view
+              {visibleSlicks.length}{" "}
+              {visibleSlicks.length === 1 ? "slick" : "slicks"} in view
             </span>
 
             <span>
               {cursorPosition
                 ? `Lat ${cursorPosition.latitude.toFixed(
                     5,
-                  )}, Lon ${cursorPosition.longitude.toFixed(
-                    5,
-                  )}`
+                  )}, Lon ${cursorPosition.longitude.toFixed(5)}`
                 : "Move over map for coordinates"}
             </span>
 
             <span>
               Scale: ~
-              {Math.round(
-                40075 /
-                  2 **
-                    Math.max(
-                      0,
-                      Number(
-                        mapZoom,
-                      ) ||
-                        0,
-                    ),
-              )}{" "}
-              km
+              {Math.round(40075 / 2 ** Math.max(0, Number(mapZoom) || 0))} km
             </span>
           </div>
         </main>
       </div>
 
-      {isReportOpen &&
-        selectedSlick && (
-          <InvestigationReport
-            slick={
-              selectedSlick
-            }
-            onClose={() =>
-              setIsReportOpen(
-                false,
-              )
-            }
-          />
-        )}
+      {isReportOpen && selectedSlick && (
+        <InvestigationReport
+          slick={selectedSlick}
+          onClose={() => setIsReportOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -344,7 +344,7 @@ export function SlickDetailPanel({
 
   return (
     <div className="min-h-full bg-[#f8f6ef]">
-      <div className="border-b border-[#d5dcd7] px-5 pb-5 pt-5">
+      <div className="border-b border-[#d5dcd7] px-4 pb-3 pt-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -374,7 +374,7 @@ export function SlickDetailPanel({
                 null,
               )
             }
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[#d5dfe0] bg-white text-xl leading-none text-[#718083] transition hover:border-[#b8cbc5] hover:text-[#246d68]"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full border  bg-white text-xl leading-none text-[#718083] transition hover:border-[#b8cbc5] hover:text-[#246d68]"
             aria-label="Close slick investigation"
             title="Close slick investigation"
           >
@@ -382,15 +382,15 @@ export function SlickDetailPanel({
           </button>
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-2 flex flex-wrap gap-2">
           {hasDarkVessel && (
-            <span className="rounded-full border border-[#d9c58f] bg-[#f7f0dc] px-2.5 py-1 text-[10px] font-bold text-[#866a2e]">
+            <span className="rounded-full border border-[#d9c58f] bg-[#f7f0dc] px-2 py-1 text-[10px] font-bold text-[#866a2e]">
               Potential dark-vessel signal
             </span>
           )}
 
           <span
-            className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${
+            className={`rounded-full border px-2 py-1 text-[10px] font-bold ${
               slick.hitl_reviewed ===
               true
                 ? "border-[#a8d2c6] bg-[#e8f4ef] text-[#267568]"

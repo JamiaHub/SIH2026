@@ -817,7 +817,7 @@ function MapToolbar({
             onSubmit={
               searchLocationOnMap
             }
-            className="relative flex h-11 w-[280px] items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3.5 shadow-[0_10px_30px_rgba(15,23,42,0.32)]"
+            className="relative flex h-11 w-[280px] items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3.5 shadow-[0_10px_30px_rgba(15,23,42,0.32)]"
           >
             <svg
               viewBox="0 0 24 24"

@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/set-state-in-effect */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const DAY_NAMES = ["S", "M", "T", "W", "T", "F", "S"];
 
@@ -108,7 +108,13 @@ const getQuickRange = (type, anchorDate) => {
 
 export function DateRangeFilter({ value, onChange }) {
   const today = useMemo(() => new Date(), []);
+  const triggerRef = useRef(null);
+  const popupRef = useRef(null);
   const [isOpen, setIsOpen] = useState(false);
+  const [popupPosition, setPopupPosition] = useState({
+    left: 12,
+    top: 12,
+  });
   const [viewMonth, setViewMonth] = useState(
     startOfMonth(parseDateKey(value?.[0]) ?? today),
   );
@@ -133,6 +139,37 @@ export function DateRangeFilter({ value, onChange }) {
       : "Select date range";
 
   const secondMonth = addMonths(viewMonth, 1);
+
+  const updatePopupPosition = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+
+    const bounds = trigger.getBoundingClientRect();
+    const popupWidth = Math.min(800, window.innerWidth - 24);
+    const header = document.querySelector("[data-marineeye-header]");
+    const headerBottom = header?.getBoundingClientRect().bottom ?? 0;
+
+    setPopupPosition({
+      left: Math.max(
+        12,
+        Math.min(bounds.left, window.innerWidth - popupWidth - 12),
+      ),
+      top: Math.max(bounds.bottom + 2, headerBottom + 2),
+    });
+  };
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    updatePopupPosition();
+    window.addEventListener("resize", updatePopupPosition);
+    window.addEventListener("scroll", updatePopupPosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updatePopupPosition);
+      window.removeEventListener("scroll", updatePopupPosition, true);
+    };
+  }, [isOpen]);
 
   const handleMonthChange = (delta) => {
     setMonthDirection(delta >= 0 ? 1 : -1);
@@ -223,7 +260,11 @@ export function DateRangeFilter({ value, onChange }) {
     <div className="relative mb-4">
       <button
         type="button"
-        onClick={() => setIsOpen((open) => !open)}
+        ref={triggerRef}
+        onClick={() => {
+          if (!isOpen) updatePopupPosition();
+          setIsOpen((open) => !open);
+        }}
         className="flex w-full items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-left shadow-sm"
       >
         <svg
@@ -255,7 +296,11 @@ export function DateRangeFilter({ value, onChange }) {
             }
           `}</style>
 
-          <div className="absolute left-0 top-[calc(100%+2px)] z-[1100] w-[800px] rounded-md border border-slate-800 bg-white p-0 shadow-xl">
+          <div
+            ref={popupRef}
+            className="fixed z-[1100] max-h-[calc(100vh-24px)] w-[min(800px,calc(100vw-24px))] overflow-y-auto rounded-md border border-slate-800 bg-white p-0 shadow-xl"
+            style={popupPosition}
+          >
             <div className="flex max-h-[420px]">
               <aside className="w-[150px] border-r border-slate-200 bg-slate-50 px-4 py-3">
                 <div className="space-y-[2px]">
@@ -357,7 +402,7 @@ export function DateRangeFilter({ value, onChange }) {
               </div>
             </div>
 
-            <div className="flex justify-end gap-6 border-t border-slate-200 px-6 py-4">
+            <div className="flex justify-end gap-6 border-t border-slate-200 px-6 py-3">
               <button
                 type="button"
                 className="text-[14px] font-semibold uppercase tracking-[0.12em] text-slate-600"

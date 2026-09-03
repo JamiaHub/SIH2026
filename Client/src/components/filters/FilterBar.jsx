@@ -90,7 +90,7 @@ export function FilterBar() {
   return (
     <div className="flex h-full w-full flex-col bg-[#f4f6f4] text-slate-700">
       {/* Header */}
-      <div className="border-b border-slate-200 bg-white px-5 py-5">
+      <div className="border-b border-slate-200 bg-white px-4 py-3 pt-4">
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center gap-2">
@@ -100,7 +100,7 @@ export function FilterBar() {
               </span>
             </div>
 
-            <h2 className="mt-2 text-[20px] font-semibold tracking-tight text-slate-900">
+            <h2 className="mt-1 text-[20px] font-semibold tracking-tight text-slate-900">
               Investigation
             </h2>
 
@@ -112,14 +112,14 @@ export function FilterBar() {
           <button
             type="button"
             onClick={resetFilters}
-            className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-500 transition hover:border-slate-300 hover:bg-white hover:text-slate-800"
+            className="rounded-2xl border border-slate-200  px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-500 transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-800"
           >
             Reset
           </button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-5">
+      <div className="flex-1 overflow-y-auto px-5 py-4">
         {/* Time */}
         <section className="mb-6">
           <div className="mb-2 flex items-center justify-between">

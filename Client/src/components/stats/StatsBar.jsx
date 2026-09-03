@@ -121,7 +121,7 @@ export function StatsBar() {
   };
 
   return (
-    <div className="pointer-events-none absolute left-[92px] right-4 top-4 z-[550] flex max-w-[calc(100%-108px)] gap-2 overflow-x-auto pb-1 scrollbar-none">
+    <div className="pointer-events-none absolute left-[75px] right-4 top-4 z-[550] flex max-w-[calc(100%-108px)] gap-2 overflow-x-auto pb-1 scrollbar-none">
       {stats.map((stat) => (
         <div
           key={stat.label}
