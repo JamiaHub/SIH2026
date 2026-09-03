@@ -2,221 +2,1217 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-SERVER_DIR = Path(__file__).resolve().parent
-DATA_DIR = SERVER_DIR.parent
-DATABASE_PATH = SERVER_DIR / "marineeye.db"
-SLICK_CSV = DATA_DIR / "mock_slick_detections.csv"
-SOURCE_CSV = DATA_DIR / "mock_sources.csv"
-AIS_CSV = DATA_DIR / "mock_ais_tracks.csv"
 
-app = FastAPI(title="MarineEye Demo API", version="0.1.0")
+# ============================================================
+# MarineEye Backend
+# ============================================================
+#
+# Responsibilities:
+#   1. Load the existing CSV fixtures.
+#   2. Normalize them into the MarineEye data contract.
+#   3. Store normalized records in SQLite.
+#   4. Expose the data through FastAPI.
+#
+# The frontend can therefore use the API without changing
+# the shape expected by the existing React components.
+#
+# NOTE:
+# The current slick/drift data is still demo/mock data.
+# Real ML inference, real AIS ingestion and real ocean
+# modelling can be plugged into this API later.
+# ============================================================
+
+
+# ------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------
+
+SERVER_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = SERVER_DIR.parent
+
+DATABASE_PATH = SERVER_DIR / "marineeye.db"
+
+SLICK_CSV = PROJECT_DIR / "mock_slick_detections.csv"
+SOURCE_CSV = PROJECT_DIR / "mock_sources.csv"
+AIS_CSV = PROJECT_DIR / "mock_ais_tracks.csv"
+
+
+# ------------------------------------------------------------
+# FastAPI application
+# ------------------------------------------------------------
+
+app = FastAPI(
+    title="MarineEye API",
+    description=(
+        "Backend API for MarineEye oil-slick detection, "
+        "source attribution and AIS visualization."
+    ),
+    version="1.0.0",
+)
+
+
+# The frontend is served by Vite during development.
+# Keeping CORS open here also makes direct API testing easier.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-def as_float(value: str | None, default: float = 0) -> float:
-    return float(value) if value not in (None, "") else default
+# ------------------------------------------------------------
+# Utility functions
+# ------------------------------------------------------------
 
 
-def as_bool(value: str | None) -> bool:
-    return str(value).lower() in {"true", "1", "yes"}
+def clean_value(value: Any) -> Any:
+    """Convert CSV values into clean Python values."""
+
+    if value is None:
+        return None
+
+    if not isinstance(value, str):
+        return value
+
+    value = value.strip()
+
+    if value == "":
+        return None
+
+    return value
 
 
-def polygon_from_wkt(value: str) -> dict[str, Any]:
-    coordinates = []
-    body = value.removeprefix("POLYGON((").removesuffix("))")
-    for pair in body.split(","):
-        longitude, latitude = pair.strip().split()
-        coordinates.append([float(longitude), float(latitude)])
-    return {"type": "Polygon", "coordinates": [coordinates]}
+def normalize_key(key: str) -> str:
+    """Normalize a CSV column name for easier matching."""
+
+    return (
+        key.strip()
+        .lower()
+        .replace("-", "_")
+        .replace(" ", "_")
+    )
 
 
-def build_drift(latitude: float, longitude: float) -> dict[str, list[dict[str, Any]]]:
+def normalized_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Create a normalized-key copy of a CSV row."""
+
     return {
-        "hindcast": [
-            {
-                "t_offset_hours": -(index + 1) * 8,
-                "center": [longitude, latitude],
-                "radius_km": round(1.8 + index * 1.8, 2),
-            }
-            for index in range(5)
-        ],
-        "forecast": [
-            {
-                "t_offset_hours": (index + 1) * 6,
-                "center": [longitude, latitude],
-                "radius_km": round(0.8 + index * 0.8, 2),
-            }
-            for index in range(4)
-        ],
+        normalize_key(str(key)): clean_value(value)
+        for key, value in row.items()
+        if key is not None
     }
 
 
-def connect() -> sqlite3.Connection:
+def first_value(
+    row: dict[str, Any],
+    *keys: str,
+    default: Any = None,
+) -> Any:
+    """Return the first non-empty value matching the supplied keys."""
+
+    normalized = {
+        normalize_key(str(key)): value
+        for key, value in row.items()
+    }
+
+    for key in keys:
+        value = normalized.get(normalize_key(key))
+
+        if value is not None and value != "":
+            return value
+
+    return default
+
+
+def to_float(
+    value: Any,
+    default: float | None = None,
+) -> float | None:
+    """Safely convert a value to float."""
+
+    if value is None or value == "":
+        return default
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def to_bool(
+    value: Any,
+    default: bool = False,
+) -> bool:
+    """Safely convert common CSV boolean representations."""
+
+    if isinstance(value, bool):
+        return value
+
+    if value is None:
+        return default
+
+    normalized = str(value).strip().lower()
+
+    if normalized in {
+        "true",
+        "1",
+        "yes",
+        "y",
+        "verified",
+        "reviewed",
+    }:
+        return True
+
+    if normalized in {
+        "false",
+        "0",
+        "no",
+        "n",
+        "unverified",
+        "pending",
+    }:
+        return False
+
+    return default
+
+
+def safe_json_loads(value: Any) -> Any:
+    """Try to parse JSON without allowing malformed input to crash the API."""
+
+    if value is None:
+        return None
+
+    if not isinstance(value, str):
+        return value
+
+    value = value.strip()
+
+    if not value:
+        return None
+
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def read_csv(path: Path) -> list[dict[str, Any]]:
+    """Read a CSV file into dictionaries."""
+
+    if not path.exists():
+        raise FileNotFoundError(f"CSV file not found: {path}")
+
+    with path.open(
+        "r",
+        encoding="utf-8-sig",
+        newline="",
+    ) as file:
+        return [
+            normalized_row(row)
+            for row in csv.DictReader(file)
+        ]
+
+
+# ------------------------------------------------------------
+# Geometry handling
+# ------------------------------------------------------------
+
+
+def parse_coordinate_pair(value: str) -> list[float] | None:
+    """Parse a single x y coordinate pair."""
+
+    if not value:
+        return None
+
+    parts = value.strip().split()
+
+    if len(parts) < 2:
+        return None
+
+    longitude = to_float(parts[0])
+    latitude = to_float(parts[1])
+
+    if longitude is None or latitude is None:
+        return None
+
+    return [longitude, latitude]
+
+
+def polygon_from_wkt(wkt: str) -> dict[str, Any] | None:
+    """
+    Convert simple WKT POLYGON geometry into GeoJSON.
+
+    Example:
+
+    POLYGON((75.1 9.2,75.2 9.2,75.2 9.3,75.1 9.3,75.1 9.2))
+    """
+
+    if not wkt:
+        return None
+
+    text = str(wkt).strip()
+
+    if not text.upper().startswith("POLYGON"):
+        return None
+
+    try:
+        start = text.index("((") + 2
+        end = text.rindex("))")
+
+        coordinate_text = text[start:end]
+
+        coordinates = []
+
+        for point in coordinate_text.split(","):
+            parsed = parse_coordinate_pair(point)
+
+            if parsed:
+                coordinates.append(parsed)
+
+        if len(coordinates) < 3:
+            return None
+
+        return {
+            "type": "Polygon",
+            "coordinates": [coordinates],
+        }
+
+    except (ValueError, IndexError):
+        return None
+
+
+def polygon_from_value(value: Any) -> dict[str, Any] | None:
+    """Accept either GeoJSON JSON or WKT polygon text."""
+
+    if value is None:
+        return None
+
+    if isinstance(value, dict):
+        if value.get("type") and value.get("coordinates"):
+            return value
+
+    parsed_json = safe_json_loads(value)
+
+    if isinstance(parsed_json, dict):
+        if parsed_json.get("type") and parsed_json.get("coordinates"):
+            return parsed_json
+
+    return polygon_from_wkt(str(value))
+
+
+def polygon_center(
+    polygon: dict[str, Any],
+) -> tuple[float, float]:
+    """
+    Calculate a simple polygon centroid.
+
+    Returns:
+        longitude, latitude
+    """
+
+    try:
+        coordinates = polygon["coordinates"][0]
+
+        points = [
+            (float(point[0]), float(point[1]))
+            for point in coordinates
+            if len(point) >= 2
+        ]
+
+        if not points:
+            return 0.0, 0.0
+
+        longitude = sum(point[0] for point in points) / len(points)
+        latitude = sum(point[1] for point in points) / len(points)
+
+        return longitude, latitude
+
+    except (KeyError, TypeError, ValueError, IndexError):
+        return 0.0, 0.0
+
+
+# ------------------------------------------------------------
+# Demo drift generation
+# ------------------------------------------------------------
+
+
+def build_drift_cone(
+    polygon: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    """
+    Generate deterministic demo hindcast/forecast positions.
+
+    IMPORTANT:
+    These values are visualization fixtures, NOT scientific
+    ocean-current predictions.
+    """
+
+    longitude, latitude = polygon_center(polygon)
+
+    hindcast = []
+
+    for index in range(5):
+        hours = -48 + index * 12
+
+        drift_longitude = longitude - 0.012 * index
+        drift_latitude = latitude + 0.004 * index
+
+        radius_km = 1.5 + index * 0.9
+
+        hindcast.append(
+            {
+                "t_offset_hours": hours,
+                "radius_km": round(radius_km, 2),
+                "center": [
+                    round(drift_longitude, 6),
+                    round(drift_latitude, 6),
+                ],
+            }
+        )
+
+    forecast = []
+
+    for index in range(4):
+        hours = (index + 1) * 12
+
+        drift_longitude = longitude + 0.014 * index
+        drift_latitude = latitude + 0.006 * index
+
+        radius_km = 2.0 + index * 1.2
+
+        forecast.append(
+            {
+                "t_offset_hours": hours,
+                "radius_km": round(radius_km, 2),
+                "center": [
+                    round(drift_longitude, 6),
+                    round(drift_latitude, 6),
+                ],
+            }
+        )
+
+    return {
+        "hindcast": hindcast,
+        "forecast": forecast,
+    }
+
+
+# ------------------------------------------------------------
+# Source normalization
+# ------------------------------------------------------------
+
+
+def normalize_source(row: dict[str, Any]) -> dict[str, Any]:
+    """Convert a source CSV row into the MarineEye source contract."""
+
+    source_id = first_value(
+        row,
+        "id",
+        "source_id",
+        "vessel_id",
+        "infra_id",
+        "infrastructure_id",
+        default="UNKNOWN",
+    )
+
+    source_type = first_value(
+        row,
+        "type",
+        "source_type",
+        "class",
+        default="vessel",
+    )
+
+    source_type = str(source_type).strip().lower()
+
+    if source_type in {
+        "dark vessel",
+        "dark-vessel",
+        "darkvessel",
+    }:
+        source_type = "dark_vessel"
+
+    if source_type not in {
+        "vessel",
+        "dark_vessel",
+        "infrastructure",
+    }:
+        source_type = "vessel"
+
+    source = {
+        "id": str(source_id),
+        "type": source_type,
+        "score": to_float(
+            first_value(
+                row,
+                "score",
+                "fused_score",
+                "attribution_score",
+            ),
+            0.0,
+        ),
+        "proximity": to_float(
+            first_value(
+                row,
+                "proximity",
+                "proximity_score",
+            ),
+            0.0,
+        ),
+        "trajectory_match": to_float(
+            first_value(
+                row,
+                "trajectory_match",
+                "trajectory_score",
+                "trajectory_match_score",
+            ),
+            0.0,
+        ),
+        "cpa": to_float(
+            first_value(
+                row,
+                "cpa",
+                "cpa_score",
+            ),
+            0.0,
+        ),
+        "tcpa": to_float(
+            first_value(
+                row,
+                "tcpa",
+                "tcpa_score",
+            ),
+            0.0,
+        ),
+        "drift_overlap": to_float(
+            first_value(
+                row,
+                "drift_overlap",
+                "drift_overlap_score",
+            ),
+            0.0,
+        ),
+        "ais_gap": to_float(
+            first_value(
+                row,
+                "ais_gap",
+                "ais_gap_score",
+            ),
+            0.0,
+        ),
+        "behavior": to_float(
+            first_value(
+                row,
+                "behavior",
+                "behavior_score",
+            ),
+            0.0,
+        ),
+        "dominant_factor": first_value(
+            row,
+            "dominant_factor",
+            "strongest_evidence",
+            "factor",
+            default="Proximity",
+        ),
+        "navic_state": first_value(
+            row,
+            "navic_state",
+            "navic",
+            "navigation_state",
+            default="Available",
+        ),
+    }
+
+    # Keep useful original values without breaking the normalized contract.
+    source["raw"] = row
+
+    return source
+
+
+# ------------------------------------------------------------
+# Slick normalization
+# ------------------------------------------------------------
+
+
+def normalize_slick(
+    row: dict[str, Any],
+    sources_by_slick: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Convert one slick CSV row into the MarineEye slick contract."""
+
+    slick_id = first_value(
+        row,
+        "id",
+        "slick_id",
+        "detection_id",
+        default="UNKNOWN",
+    )
+
+    polygon_value = first_value(
+        row,
+        "polygon",
+        "polygon_wkt",
+        "geometry",
+        "wkt",
+        "geom",
+        "shape",
+    )
+
+    polygon = polygon_from_value(polygon_value)
+
+    if polygon is None:
+        # A malformed geometry should not crash the entire API.
+        # The frontend simply receives an empty polygon.
+        polygon = {
+            "type": "Polygon",
+            "coordinates": [[]],
+        }
+
+    slick_class = first_value(
+        row,
+        "class",
+        "classification",
+        "slick_class",
+        default="ambiguous",
+    )
+
+    slick = {
+        "id": str(slick_id),
+        "polygon": polygon,
+        "class": str(slick_class),
+        "detection_confidence": to_float(
+            first_value(
+                row,
+                "detection_confidence",
+                "detection_score",
+                "confidence",
+            ),
+            0.0,
+        ),
+        "slick_confidence": to_float(
+            first_value(
+                row,
+                "slick_confidence",
+                "slick_score",
+                "shape_confidence",
+            ),
+            0.0,
+        ),
+        "area": to_float(
+            first_value(
+                row,
+                "area",
+                "area_km2",
+                "area_km",
+            ),
+            0.0,
+        ),
+        "age_estimate": to_float(
+    first_value(
+        row,
+        "age_estimate",
+        "age_estimate_hours",
+        "age_hours",
+        "estimated_age",
+    ),
+    0.0,
+),
+        "timestamp": str(
+            first_value(
+                row,
+                "timestamp",
+                "detected_at",
+                "acquisition_timestamp",
+                "date",
+                default="",
+            )
+        ),
+        "hitl_reviewed": to_bool(
+            first_value(
+                row,
+                "hitl_reviewed",
+                "reviewed",
+                "verified",
+                "human_reviewed",
+            ),
+            False,
+        ),
+    }
+
+    slick["sources"] = sorted(
+        sources_by_slick.get(str(slick_id), []),
+        key=lambda source: source.get("score") or 0.0,
+        reverse=True,
+    )[:3]
+
+    slick["drift"] = build_drift_cone(polygon)
+
+    return slick
+
+
+# ------------------------------------------------------------
+# AIS normalization
+# ------------------------------------------------------------
+
+
+def normalize_ais_tracks(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Group raw AIS observations into vessel tracks."""
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+
+    for row in rows:
+        vessel_id = first_value(
+            row,
+            "vessel_id",
+            "mmsi",
+            "id",
+            "ship_id",
+            default="UNKNOWN",
+        )
+
+        grouped.setdefault(str(vessel_id), []).append(row)
+
+    tracks = []
+
+    for vessel_id, vessel_rows in grouped.items():
+        positions: list[list[float]] = []
+        timestamps: list[str] = []
+
+        speeds: list[float] = []
+        headings: list[float] = []
+
+        related_source_id = None
+
+        for row in vessel_rows:
+            longitude = to_float(
+                first_value(
+                    row,
+                    "longitude",
+                    "lon",
+                    "lng",
+                    "x",
+                )
+            )
+
+            latitude = to_float(
+                first_value(
+                    row,
+                    "latitude",
+                    "lat",
+                    "y",
+                )
+            )
+
+            if longitude is not None and latitude is not None:
+                positions.append(
+                    [
+                        longitude,
+                        latitude,
+                    ]
+                )
+
+            timestamp = first_value(
+                row,
+                "timestamp",
+                "time",
+                "datetime",
+                "observed_at",
+            )
+
+            if timestamp is not None:
+                timestamps.append(str(timestamp))
+
+            speed = to_float(
+                first_value(
+                    row,
+                    "speed",
+                    "speed_kn",
+                    "speed_knots",
+                    "sog",
+                )
+            )
+
+            if speed is not None:
+                speeds.append(speed)
+
+            heading = to_float(
+                first_value(
+                    row,
+                    "heading",
+                    "course",
+                    "cog",
+                    "direction",
+                )
+            )
+
+            if heading is not None:
+                headings.append(heading)
+
+            source = first_value(
+                row,
+                "related_source_id",
+                "source_id",
+                "matched_source_id",
+            )
+
+            if source is not None:
+                related_source_id = str(source)
+
+        if not positions:
+            continue
+
+        tracks.append(
+            {
+                "vessel_id": vessel_id,
+                "positions": positions,
+                "timestamps": timestamps,
+                "speed": round(
+                    speeds[-1] if speeds else 0.0,
+                    2,
+                ),
+                "heading": round(
+                    headings[-1] if headings else 0.0,
+                    2,
+                ),
+                "related_source_id": related_source_id,
+            }
+        )
+
+    return tracks
+
+
+# ------------------------------------------------------------
+# SQLite setup
+# ------------------------------------------------------------
+
+
+def get_connection() -> sqlite3.Connection:
     connection = sqlite3.connect(DATABASE_PATH)
+
     connection.row_factory = sqlite3.Row
+
     return connection
 
 
 def initialise_database() -> None:
-    with connect() as connection:
-        connection.executescript(
+    """
+    Create the database and seed it from the project CSV fixtures.
+
+    A schema version is stored so that future backend schema
+    changes can safely recreate the demo database.
+    """
+
+    slick_rows = read_csv(SLICK_CSV)
+    source_rows = read_csv(SOURCE_CSV)
+    ais_rows = read_csv(AIS_CSV)
+
+    sources_by_slick: dict[str, list[dict[str, Any]]] = {}
+
+    for row in source_rows:
+        slick_id = first_value(
+            row,
+            "slick_id",
+            "detection_id",
+            "slick",
+        )
+
+        if slick_id is None:
+            continue
+
+        source = normalize_source(row)
+
+        sources_by_slick.setdefault(
+            str(slick_id),
+            [],
+        ).append(source)
+
+    slicks = [
+        normalize_slick(
+            row,
+            sources_by_slick,
+        )
+        for row in slick_rows
+    ]
+
+    ais_tracks = normalize_ais_tracks(ais_rows)
+
+    connection = get_connection()
+
+    try:
+        connection.execute(
             """
-            CREATE TABLE IF NOT EXISTS slicks (
-                id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, sensor TEXT,
-                scene_id TEXT, class TEXT NOT NULL, detection_confidence REAL,
-                slick_confidence REAL, area REAL, age_estimate REAL,
-                centroid_lat REAL, centroid_lon REAL, polygon_wkt TEXT,
-                hitl_reviewed INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS sources (
-                slick_id TEXT NOT NULL, rank INTEGER NOT NULL, source_id TEXT NOT NULL,
-                type TEXT NOT NULL, cpa REAL, tcpa REAL, drift_overlap REAL,
-                ais_gap_anomaly REAL, behavioral_anomaly REAL, fused_score REAL,
-                dominant_factor TEXT, navic_tracked INTEGER NOT NULL,
-                PRIMARY KEY (slick_id, rank)
-            );
-            CREATE TABLE IF NOT EXISTS ais_tracks (
-                vessel_id TEXT NOT NULL, timestamp TEXT NOT NULL, latitude REAL,
-                longitude REAL, speed REAL, heading REAL, linked_slick_id TEXT
-            );
+            CREATE TABLE IF NOT EXISTS app_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
             """
         )
 
-        if connection.execute("SELECT COUNT(*) FROM slicks").fetchone()[0] == 0:
-            with SLICK_CSV.open(newline="", encoding="utf-8") as file:
-                rows = [
+        version_row = connection.execute(
+            """
+            SELECT value
+            FROM app_meta
+            WHERE key = 'schema_version'
+            """
+        ).fetchone()
+
+        current_version = (
+            version_row["value"]
+            if version_row
+            else None
+        )
+
+        # Re-seed databases created before WKT geometry normalization was fixed.
+        database_version = "6"
+
+        if current_version != database_version:
+            connection.execute("DROP TABLE IF EXISTS slicks")
+            connection.execute("DROP TABLE IF EXISTS sources")
+            connection.execute("DROP TABLE IF EXISTS ais_tracks")
+
+            connection.execute(
+                """
+                CREATE TABLE slicks (
+                    id TEXT PRIMARY KEY,
+                    data TEXT NOT NULL
+                )
+                """
+            )
+
+            connection.execute(
+                """
+                CREATE TABLE sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    slick_id TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    data TEXT NOT NULL
+                )
+                """
+            )
+
+            connection.execute(
+                """
+                CREATE TABLE ais_tracks (
+                    vessel_id TEXT PRIMARY KEY,
+                    data TEXT NOT NULL
+                )
+                """
+            )
+
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO app_meta
+                (key, value)
+                VALUES ('schema_version', ?)
+                """,
+                (database_version,),
+            )
+
+        # If the database is empty, seed it.
+        slick_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM slicks"
+        ).fetchone()["count"]
+
+        if slick_count == 0:
+            for slick in slicks:
+                connection.execute(
+                    """
+                    INSERT INTO slicks (id, data)
+                    VALUES (?, ?)
+                    """,
                     (
-                        row["id"], row["timestamp"], row["sensor"], row["scene_id"],
-                        row["class"], as_float(row["detection_confidence"]),
-                        as_float(row["slick_confidence"]), as_float(row["area_km2"]),
-                        as_float(row["age_estimate_hours"]), as_float(row["centroid_lat"]),
-                        as_float(row["centroid_lon"]), row["polygon_wkt"],
-                        int(as_bool(row["hitl_reviewed"])),
+                        slick["id"],
+                        json.dumps(
+                            slick,
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
+
+                for source in slick["sources"]:
+                    connection.execute(
+                        """
+                        INSERT INTO sources
+                        (slick_id, source_id, data)
+                        VALUES (?, ?, ?)
+                        """,
+                        (
+                            slick["id"],
+                            source["id"],
+                            json.dumps(
+                                source,
+                                ensure_ascii=False,
+                            ),
+                        ),
                     )
-                    for row in csv.DictReader(file)
-                ]
-            connection.executemany("INSERT INTO slicks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
 
-        if connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0] == 0:
-            with SOURCE_CSV.open(newline="", encoding="utf-8") as file:
-                rows = []
-                for row in csv.DictReader(file):
-                    rows.append((
-                        row["slick_id"], int(row["rank"]), row["source_id"], row["type"],
-                        as_float(row["cpa"]), as_float(row["tcpa"]), as_float(row["drift_overlap"]),
-                        as_float(row["ais_gap_anomaly"]), as_float(row["behavioral_anomaly"]),
-                        as_float(row["fused_score"]), row["dominant_factor"],
-                        int(as_bool(row["navic_tracked"])),
-                    ))
-            connection.executemany("INSERT INTO sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        ais_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM ais_tracks"
+        ).fetchone()["count"]
 
-        if connection.execute("SELECT COUNT(*) FROM ais_tracks").fetchone()[0] == 0:
-            with AIS_CSV.open(newline="", encoding="utf-8") as file:
-                rows = [
+        if ais_count == 0:
+            for track in ais_tracks:
+                connection.execute(
+                    """
+                    INSERT INTO ais_tracks
+                    (vessel_id, data)
+                    VALUES (?, ?)
+                    """,
                     (
-                        row["vessel_id"], row["timestamp"], as_float(row["lat"]),
-                        as_float(row["lon"]), as_float(row["speed_knots"]),
-                        as_float(row["heading_deg"]), row["linked_slick_id"] or None,
-                    )
-                    for row in csv.DictReader(file)
-                ]
-            connection.executemany("INSERT INTO ais_tracks VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+                        track["vessel_id"],
+                        json.dumps(
+                            track,
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
+
+        connection.commit()
+
+    finally:
+        connection.close()
 
 
-def read_data(slick_id: str | None = None) -> dict[str, list[dict[str, Any]]]:
-    with connect() as connection:
-        slick_rows = connection.execute(
-            "SELECT * FROM slicks WHERE (? IS NULL OR id = ?) ORDER BY timestamp",
-            (slick_id, slick_id),
+# ------------------------------------------------------------
+# Database reads
+# ------------------------------------------------------------
+
+
+def get_all_slicks() -> list[dict[str, Any]]:
+    connection = get_connection()
+
+    try:
+        rows = connection.execute(
+            """
+            SELECT data
+            FROM slicks
+            ORDER BY id
+            """
         ).fetchall()
-        if slick_id and not slick_rows:
-            raise HTTPException(status_code=404, detail=f"Slick {slick_id} was not found")
 
-        sources = connection.execute(
-            "SELECT * FROM sources WHERE (? IS NULL OR slick_id = ?) ORDER BY slick_id, rank",
-            (slick_id, slick_id),
+        return [
+            json.loads(row["data"])
+            for row in rows
+        ]
+
+    finally:
+        connection.close()
+
+
+def get_all_ais_tracks() -> list[dict[str, Any]]:
+    connection = get_connection()
+
+    try:
+        rows = connection.execute(
+            """
+            SELECT data
+            FROM ais_tracks
+            ORDER BY vessel_id
+            """
         ).fetchall()
-        source_map: dict[str, list[dict[str, Any]]] = {}
-        for source in sources:
-            source_map.setdefault(source["slick_id"], []).append({
-                "id": source["source_id"],
-                "type": source["type"],
-                "sub_scores": {
-                    "cpa": source["cpa"], "tcpa": source["tcpa"],
-                    "drift_overlap": source["drift_overlap"],
-                    "ais_gap_anomaly": source["ais_gap_anomaly"],
-                    "behavioral_anomaly": source["behavioral_anomaly"],
-                },
-                "fused_score": source["fused_score"],
-                "dominant_factor": source["dominant_factor"],
-                "navic_tracked": bool(source["navic_tracked"]),
-            })
 
-        slicks = []
-        for row in slick_rows:
-            slicks.append({
-                "id": row["id"], "polygon": polygon_from_wkt(row["polygon_wkt"]),
-                "class": row["class"], "detection_confidence": row["detection_confidence"],
-                "slick_confidence": row["slick_confidence"], "area": row["area"],
-                "age_estimate": row["age_estimate"], "timestamp": row["timestamp"],
-                "hitl_reviewed": bool(row["hitl_reviewed"]),
-                "drift": build_drift(row["centroid_lat"], row["centroid_lon"]),
-                "sources": source_map.get(row["id"], [])[:3],
-            })
+        return [
+            json.loads(row["data"])
+            for row in rows
+        ]
 
-        ais_rows = connection.execute(
-            "SELECT * FROM ais_tracks WHERE (? IS NULL OR linked_slick_id = ? OR linked_slick_id IS NULL) ORDER BY vessel_id, timestamp",
-            (slick_id, slick_id),
-        ).fetchall()
-        tracks_by_vessel: dict[str, dict[str, Any]] = {}
-        for row in ais_rows:
-            track = tracks_by_vessel.setdefault(row["vessel_id"], {
-                "vessel_id": row["vessel_id"], "related_source_id": None,
-                "positions": [], "timestamps": [], "speed": row["speed"], "heading": row["heading"],
-            })
-            track["positions"].append([row["longitude"], row["latitude"]])
-            track["timestamps"].append(row["timestamp"])
-            track["speed"] = row["speed"]
-            track["heading"] = row["heading"]
-            if row["linked_slick_id"] == slick_id:
-                track["related_source_id"] = row["vessel_id"]
+    finally:
+        connection.close()
 
-    return {"slicks": slicks, "aisTracks": list(tracks_by_vessel.values())}
+
+def get_slick_by_id(
+    slick_id: str,
+) -> dict[str, Any] | None:
+    connection = get_connection()
+
+    try:
+        row = connection.execute(
+            """
+            SELECT data
+            FROM slicks
+            WHERE id = ?
+            """,
+            (slick_id,),
+        ).fetchone()
+
+        if row is None:
+            return None
+
+        return json.loads(row["data"])
+
+    finally:
+        connection.close()
+
+
+# ------------------------------------------------------------
+# Startup
+# ------------------------------------------------------------
 
 
 @app.on_event("startup")
-def startup() -> None:
+def startup_event() -> None:
     initialise_database()
 
 
+# ------------------------------------------------------------
+# API endpoints
+# ------------------------------------------------------------
+
+
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    """Simple backend health check."""
+
+    return {
+        "status": "ok",
+        "service": "MarineEye API",
+        "database": str(DATABASE_PATH.name),
+    }
 
 
 @app.get("/api/data")
-def data(slick_id: str | None = Query(default=None)) -> dict[str, list[dict[str, Any]]]:
-    return read_data(slick_id)
+def get_data(
+    slick_id: str | None = Query(
+        default=None,
+        description="Optional slick ID to inspect.",
+    ),
+) -> dict[str, Any]:
+    """
+    Return MarineEye data.
+
+    Without slick_id:
+        Returns all slicks and all AIS tracks.
+
+    With slick_id:
+        Returns the requested slick and related AIS tracks.
+    """
+
+    if slick_id:
+        slick = get_slick_by_id(slick_id)
+
+        if slick is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Slick '{slick_id}' was not found.",
+            )
+
+        related_source_ids = {
+            str(source["id"])
+            for source in slick.get("sources", [])
+            if source.get("type") != "infrastructure"
+        }
+
+        ais_tracks = get_all_ais_tracks()
+
+        related_tracks = [
+            track
+            for track in ais_tracks
+            if (
+                track.get("related_source_id") in related_source_ids
+                or track.get("related_source_id") is None
+            )
+        ]
+
+        return {
+            "slicks": [slick],
+            "aisTracks": related_tracks,
+        }
+
+    return {
+        "slicks": get_all_slicks(),
+        "aisTracks": get_all_ais_tracks(),
+    }
 
 
 @app.get("/api/slicks")
-def slicks() -> list[dict[str, Any]]:
-    return read_data()["slicks"]
+def get_slicks() -> dict[str, Any]:
+    """Return all slick detections."""
+
+    return {
+        "slicks": get_all_slicks(),
+    }
+
+
+@app.get("/api/slicks/{slick_id}")
+def get_slick(slick_id: str) -> dict[str, Any]:
+    """Return a single slick."""
+
+    slick = get_slick_by_id(slick_id)
+
+    if slick is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Slick '{slick_id}' was not found.",
+        )
+
+    return slick
 
 
 @app.get("/api/ais-tracks")
-def ais_tracks() -> list[dict[str, Any]]:
-    return read_data()["aisTracks"]
+def get_ais_tracks() -> dict[str, Any]:
+    """Return all grouped AIS tracks."""
+
+    return {
+        "aisTracks": get_all_ais_tracks(),
+    }
+
+
+@app.get("/api/stats")
+def get_stats() -> dict[str, Any]:
+    """Return dashboard-level statistics."""
+
+    slicks = get_all_slicks()
+
+    dark_vessel_count = 0
+
+    for slick in slicks:
+        for source in slick.get("sources", []):
+            if source.get("type") == "dark_vessel":
+                dark_vessel_count += 1
+                break
+
+    peak_confidence = 0.0
+
+    if slicks:
+        peak_confidence = max(
+            float(
+                slick.get(
+                    "detection_confidence",
+                    0.0,
+                )
+                or 0.0
+            )
+            for slick in slicks
+        )
+
+    return {
+        "slick_count": len(slicks),
+        "dark_vessel_cases": dark_vessel_count,
+        "peak_detection_confidence": peak_confidence,
+        "database": DATABASE_PATH.name,
+    }
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    """Root endpoint."""
+
+    return {
+        "service": "MarineEye API",
+        "docs": "/docs",
+        "health": "/api/health",
+    }
